@@ -4,236 +4,238 @@
 #include <string>
 #include <stdio.h>
 
-#define PASSWORD_LEN		(14)
-#define PASSWORD_LEN_MAX	(16)
-
-// パスワードの計算カーネル
-__global__ void checkPassKernel(
-	unsigned char *result,			// OUTPUT	パスしたらTRUEを返す先	[x*y]
-	const unsigned char*candidate,	// INPUT	パスワード候補(文字コード変換済み) [x*y][16]
-	const unsigned char*refer_chk	// INPUT	判定用チェックディジット	[x*y][16]
+__global__ void calc_1_4col(
+	unsigned char *work4col,			// 格納先 自分の要素は求めたグローバルインデックス*8からはじまる8byte
+	const unsigned char *chrmask,		// 有効文字コードかの判定用ビットマスク
+	const unsigned char *lut_x31F4,		// $31F4導出用のLUT
+	const unsigned char *lut_x31F5		// $31F5導出用のLUT
 )
 {
-	bool result_b(false), match_flg;
-	int a(0), c(0), cb(0), chridx, strlength;
-	unsigned char mem20(0), mem21(0);
-	unsigned char mem50(0), mem51(0), mem52(0), mem53(1), mem54(0);
+	unsigned int gblidx = 8 * (((blockIdx.y * gridDim.x) + blockIdx.x) * blockDim.x + threadIdx.x);
 
-	int th_x = threadIdx.x;		// 
-//	int th_y = threadIdx.y;
-
-	auto ror = [&c](unsigned char v)
-	{
-		unsigned char wc = c;
-
-		c = v & 0x01;
-		return (unsigned char)((v >> 1) | (wc << 7));
-	};
-	auto adc = [&c](unsigned char lhs, unsigned char rhs)
-	{
-		unsigned short v;
-
-		v = (unsigned short)lhs + (unsigned short)rhs + (unsigned short)c;
-		c = (v > 0xFF) ? 1 : 0;
-
-		return (v & 0xFF);
-	};
-	auto bitcnt = [](unsigned long int v)
-	{
-			v = (v & 0x55555555) + (v >> 1 & 0x55555555);
-			v = (v & 0x33333333) + (v >> 2 & 0x33333333);
-			v = (v & 0x0f0f0f0f) + (v >> 4 & 0x0f0f0f0f);
-			v = (v & 0x00ff00ff) + (v >> 8 & 0x00ff00ff);
-		return  (v & 0x0000ffff) + (v >> 16 & 0x0000ffff);
-	};
-
-	strlength = refer_chk[2];
-	for (chridx = 0; chridx < strlength; ++chridx) {
-		a = candidate[(th_x * PASSWORD_LEN_MAX) + chridx];
-
-		// calc checkdigit1	(ループ展開しておく)
-//		for (int bit = 7; bit >= 0; --bit) {
-//			c = (a >> bit) & 1;
-//			mem20 = ror(mem20);
-//			mem21 = ror(mem21);
-//
-//			if (c) {
-//				mem20 ^= 0x84;
-//				mem21 ^= 0x08;
-//			}
-//		}
-		c = ((a & 0x80) != 0);
-		mem20 = ror(mem20);
-		mem21 = ror(mem21);
-		cb = c ? 0x84 : 0x00;
-		mem20 ^= cb;
-		cb = c ? 0x08 : 0x00;
-		mem21 ^= cb;
-
-		c = ((a & 0x40) != 0);
-		mem20 = ror(mem20);
-		mem21 = ror(mem21);
-		cb = c ? 0x84 : 0x00;
-		mem20 ^= cb;
-		cb = c ? 0x08 : 0x00;
-		mem21 ^= cb;
-
-		c = ((a & 0x20) != 0);
-		mem20 = ror(mem20);
-		mem21 = ror(mem21);
-		cb = c ? 0x84 : 0x00;
-		mem20 ^= cb;
-		cb = c ? 0x08 : 0x00;
-		mem21 ^= cb;
-
-		c = ((a & 0x10) != 0);
-		mem20 = ror(mem20);
-		mem21 = ror(mem21);
-		cb = c ? 0x84 : 0x00;
-		mem20 ^= cb;
-		cb = c ? 0x08 : 0x00;
-		mem21 ^= cb;
-
-		c = ((a & 0x08) != 0);
-		mem20 = ror(mem20);
-		mem21 = ror(mem21);
-		cb = c ? 0x84 : 0x00;
-		mem20 ^= cb;
-		cb = c ? 0x08 : 0x00;
-		mem21 ^= cb;
-
-		c = ((a & 0x04) != 0);
-		mem20 = ror(mem20);
-		mem21 = ror(mem21);
-		cb = c ? 0x84 : 0x00;
-		mem20 ^= cb;
-		cb = c ? 0x08 : 0x00;
-		mem21 ^= cb;
-
-		c = ((a & 0x02) != 0);
-		mem20 = ror(mem20);
-		mem21 = ror(mem21);
-		cb = c ? 0x84 : 0x00;
-		mem20 ^= cb;
-		cb = c ? 0x08 : 0x00;
-		mem21 ^= cb;
-
-		c = ((a & 0x01) != 0);
-		mem20 = ror(mem20);
-		mem21 = ror(mem21);
-		cb = c ? 0x84 : 0x00;
-		mem20 ^= cb;
-		cb = c ? 0x08 : 0x00;
-		mem21 ^= cb;
-
-		// calc checkdigit2
-		c = (mem20 >= 0xE5) ? 1 : 0;
-		mem50 = adc(a, mem50);
-		mem51 = adc(mem51, mem21);
-		// calc checkdigit3
-		mem52 ^= a;
-		// calc checkdigit4
-		{
-			unsigned char v = ror(mem53);
-			mem53 = adc(v, a);
-		}
-		// calc checkdigit5
-		mem54 += (unsigned char)(c + bitcnt(a));
-	}
-	
-	result_b = true;
-	match_flg = (mem20 == refer_chk[0]);
-	result_b = result_b && match_flg;
-	match_flg = (mem21 == refer_chk[1]);
-	result_b = result_b && match_flg;
-	match_flg = (mem50 == refer_chk[3]);
-	result_b = result_b && match_flg;
-	match_flg = (mem51 == refer_chk[4]);
-	result_b = result_b && match_flg;
-	match_flg = (mem52 == refer_chk[5]);
-	result_b = result_b && match_flg;
-	match_flg = (mem53 == refer_chk[6]);
-	result_b = result_b && match_flg;
-	match_flg = (mem54 == refer_chk[7]);
-	result_b = result_b && match_flg;
-
-	result[th_x] = result_b;
-}
-
-
-// 2桁分のパスワード候補を生成する
-__global__ void chrconvKernel(
-	unsigned char *candidate,			// OUTPUT	生成する候補データ
-	const unsigned char *basecode,		// INPUT	固定部分として参照する桁情報[16]
-	const unsigned char *tbl_chrdict,	// INPUT	文字コードテーブル[256]
-	const unsigned int	passlen,		// INPUT	変換対象の桁数(全体)
-	const unsigned int	dictlen			// INPUT	文字種数
-)
-{
-	int th_x = threadIdx.x;
-
-	for (int i = 0; i < (passlen - 1); ++i) {
-		candidate[(PASSWORD_LEN_MAX * th_x) + i] = tbl_chrdict[basecode[i]];
-	}
-}
-
-__global__ void make_4col_fullpair(
-	unsigned char *pass4col,		// 格納先 自分の要素は求めたグローバルインデックス*4からはじまる4byte
-	unsigned char *chrmask,			// 有効文字コードかの判定用ビットマスク
-	const int  offset				// blockIdxのzに履かせる下駄
-)
-{
-	unsigned int	blocksize = blockDim.x * blockDim.y * blockDim.z;
-	unsigned int	thidx = (threadIdx.z * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
-	unsigned int	gridx = ((gridDim.x * gridDim.y) * ((blockIdx.z + (offset*gridDim.z)))) + (gridDim.x * blockIdx.y) + blockIdx.x;
-	unsigned int	gblidx = gridx * blocksize + thidx;
-
-	unsigned char	col1 = blockIdx.z + (offset * gridDim.z);
-	unsigned char	col2 = blockIdx.y;
-	unsigned char	col3 = blockIdx.x * (blockDim.z * blockDim.y) + threadIdx.z * blockDim.y + threadIdx.y;
+	unsigned char	col1 = blockIdx.y;
+	unsigned char	col2 = blockIdx.x >> 6;
+	unsigned char	col3 = blockIdx.x & 0x3F;
 	unsigned char	col4 = threadIdx.x;
-	
-	unsigned char unvalid;
 
-	unvalid = chrmask[col1] | chrmask[col2] | chrmask[col3] | chrmask[col4];
+	unsigned char	c = 0;					// キャリーフラグ
 
-	pass4col[gblidx] = unvalid | (col1 ^ col2 ^ col3 ^ col4);
+	// 一部オペコードをインライン化
+	auto bitrev = [](unsigned int v) {	unsigned int wk = __brev(v); return (wk >> 24); };
+	auto adc = [&c](unsigned short vl, unsigned short vr) { unsigned short wk = vl + vr + c; c = (wk >> 8) & 0x01; return (wk & 0xFF); };
+	auto ror = [&c](unsigned char v) { unsigned char wc = c; c = v & 0x01; return (unsigned char)((v >> 1) | (wc << 7)); };
+	auto bitcnt = [](unsigned long int v) { return (__popc(v)); };
+
+	unsigned char pre31f4(0), pre31f5(0), pre31f7(0), pre31f8(0), pre31fa(1), pre31fb(0);
+	unsigned char xor31f4, xor31f5, wk31fa;
+
+	const unsigned char	unvalid = chrmask[col1] | chrmask[col2] | chrmask[col3] | chrmask[col4];
+	const unsigned char chr1(col1 & 0x3F), chr2(col2 & 0x3F), chr3(col3 & 0x3F), chr4(col4 & 0x3F);
+
+	// col1～col4で与えれるならびで計算をまわす
+	xor31f4 = lut_x31F4[pre31f5]; xor31f5 = lut_x31F5[pre31f5];
+	pre31f5 = pre31f4 ^ xor31f5;
+	pre31f4 = bitrev(chr1) ^ xor31f4;	c = (pre31f4 >= 0xE5) ? 1 : 0;
+	pre31f7 = adc(chr1, pre31f7);
+	pre31f8 = adc(pre31f8, pre31f5);	wk31fa = ror(pre31fa);
+	pre31fa = adc(wk31fa, chr1);
+	pre31fb += c + bitcnt(chr1);
+
+	xor31f4 = lut_x31F4[pre31f5]; xor31f5 = lut_x31F5[pre31f5];
+	pre31f5 = pre31f4 ^ xor31f5;
+	pre31f4 = bitrev(chr2) ^ xor31f4;	c = (pre31f4 >= 0xE5) ? 1 : 0;
+	pre31f7 = adc(chr2, pre31f7);
+	pre31f8 = adc(pre31f8, pre31f5);	wk31fa = ror(pre31fa);
+	pre31fa = adc(wk31fa, chr2);
+	pre31fb += c + bitcnt(chr2);
+
+	xor31f4 = lut_x31F4[pre31f5]; xor31f5 = lut_x31F5[pre31f5];
+	pre31f5 = pre31f4 ^ xor31f5;
+	pre31f4 = bitrev(chr3) ^ xor31f4;	c = (pre31f4 >= 0xE5) ? 1 : 0;
+	pre31f7 = adc(chr3, pre31f7);
+	pre31f8 = adc(pre31f8, pre31f5);	wk31fa = ror(pre31fa);
+	pre31fa = adc(wk31fa, chr3);
+	pre31fb += c + bitcnt(chr3);
+
+	xor31f4 = lut_x31F4[pre31f5]; xor31f5 = lut_x31F5[pre31f5];
+	pre31f5 = pre31f4 ^ xor31f5;
+	pre31f4 = bitrev(chr4) ^ xor31f4;	c = (pre31f4 >= 0xE5) ? 1 : 0;
+	pre31f7 = adc(chr4, pre31f7);
+	pre31f8 = adc(pre31f8, pre31f5);	wk31fa = ror(pre31fa);
+	pre31fa = adc(wk31fa, chr4);
+	pre31fb += c + bitcnt(chr4);
+
+	/*$31F4*/	work4col[gblidx + 0] = pre31f4;
+	/*$31F5*/	work4col[gblidx + 1] = pre31f5;
+	/*$31F7*/	work4col[gblidx + 2] = pre31f7;
+	/*$31F8*/	work4col[gblidx + 3] = pre31f8;
+	/*$31F9*/	work4col[gblidx + 4] = unvalid | (chr1 ^ chr2 ^ chr3 ^ chr4);
+	/*$31FA*/	work4col[gblidx + 5] = pre31fa;
+	/*$31FB*/	work4col[gblidx + 6] = pre31fb;
+	/*carry*/	work4col[gblidx + 7] = c;
+				// F6は実質固定値なのでつめて次の桁に渡すキャリーを格納する
 }
 
-// これまでのXOR結果と4桁ぶんのXORを求める
-__global__ void calcxor8(
-	unsigned char		*xor8,		// 演算結果
-	const unsigned char *xor4,		// これまでの演算結果
-	const unsigned int	idxG		// xor8のインデックス
+// これまでの桁の値を使って追加で4桁分の計算値を求める
+__global__ void calc_4col(
+	unsigned char		*work8col,		// 格納先 自分の要素は求めたグローバルインデックス*8からはじまる8byte
+	const unsigned char	*work4col,		// これまでに計算してきた演算結果
+	const unsigned char *chrmask,		// 有効文字コードかの判定用ビットマスク
+	const unsigned char *lut_x31F4,		// $31F4導出用のLUT
+	const unsigned char *lut_x31F5,		// $31F5導出用のLUT
+	const unsigned int	idx4			// work4colに対応するインデックス値
 )
 {
-	unsigned int idxH = (blockIdx.x * 256) + threadIdx.x;
+	// スレッド番号から書き込み先インデックスを計算
+	unsigned int gblidx = 8 * (((blockIdx.y * gridDim.x) + blockIdx.x) * blockDim.x + threadIdx.x);
 
-	unsigned char W1 = xor4[idxG];
-	unsigned char W2 = xor4[idxH];
-	unsigned char enf = (W1 | W2) & 0x80;
+	const unsigned char	col1 = blockIdx.y;
+	const unsigned char	col2 = blockIdx.x >> 6;
+	const unsigned char	col3 = blockIdx.x & 0x3F;
+	const unsigned char	col4 = threadIdx.x;
+	const unsigned int	rdidx = idx4 * 8;
 
-	xor8[idxH] = enf | (W1 ^ W2);
+	unsigned char pre31f4(work4col[rdidx + 0]);
+	unsigned char pre31f5(work4col[rdidx + 1]);
+	unsigned char pre31f7(work4col[rdidx + 2]);
+	unsigned char pre31f8(work4col[rdidx + 3]);
+	unsigned char pre31f9(work4col[rdidx + 4]);
+	unsigned char pre31fa(work4col[rdidx + 5]);
+	unsigned char pre31fb(work4col[rdidx + 6]);
+	unsigned char	    c(work4col[rdidx + 7]);	// キャリーフラグ
+
+	unsigned char xor31f4, xor31f5, wk31fa;
+
+	// 一部オペコードをインライン化
+	auto bitrev = [](unsigned int v) {	unsigned int wk = __brev(v); return (wk >> 24); };
+	auto adc = [&c](unsigned short vl, unsigned short vr) { unsigned short wk = vl + vr + c; c = (wk >> 8) & 0x01; return (wk & 0xFF); };
+	auto ror = [&c](unsigned char v) { unsigned char wc = c; c = v & 0x01; return (unsigned char)((v >> 1) | (wc << 7)); };
+	auto bitcnt = [](unsigned long int v) { return (__popc(v)); };
+
+	unsigned char	unvalid = chrmask[col1] | chrmask[col2] | chrmask[col3] | chrmask[col4];
+	unsigned char chr1(col1 & 0x3F), chr2(col2 & 0x3F), chr3(col3 & 0x3F), chr4(col4 & 0x3F);
+
+	// col1～col4で与えれるならびで計算をまわす
+	xor31f4 = lut_x31F4[pre31f5]; xor31f5 = lut_x31F5[pre31f5];
+	pre31f5 = pre31f4 ^ xor31f5;
+	pre31f4 = bitrev(chr1) ^ xor31f4;	c = (pre31f4 >= 0xE5) ? 1 : 0;
+	pre31f7 = adc(chr1, pre31f7);
+	pre31f8 = adc(pre31f8, pre31f5);	wk31fa = ror(pre31fa);
+	pre31fa = adc(wk31fa, chr1);
+	pre31fb += c + bitcnt(chr1);
+
+	xor31f4 = lut_x31F4[pre31f5]; xor31f5 = lut_x31F5[pre31f5];
+	pre31f5 = pre31f4 ^ xor31f5;
+	pre31f4 = bitrev(chr2) ^ xor31f4;	c = (pre31f4 >= 0xE5) ? 1 : 0;
+	pre31f7 = adc(chr2, pre31f7);
+	pre31f8 = adc(pre31f8, pre31f5);	wk31fa = ror(pre31fa);
+	pre31fa = adc(wk31fa, chr2);
+	pre31fb += c + bitcnt(chr2);
+
+	xor31f4 = lut_x31F4[pre31f5]; xor31f5 = lut_x31F5[pre31f5];
+	pre31f5 = pre31f4 ^ xor31f5;
+	pre31f4 = bitrev(chr3) ^ xor31f4;	c = (pre31f4 >= 0xE5) ? 1 : 0;
+	pre31f7 = adc(chr3, pre31f7);
+	pre31f8 = adc(pre31f8, pre31f5);	wk31fa = ror(pre31fa);
+	pre31fa = adc(wk31fa, chr3);
+	pre31fb += c + bitcnt(chr3);
+
+	xor31f4 = lut_x31F4[pre31f5]; xor31f5 = lut_x31F5[pre31f5];
+	pre31f5 = pre31f4 ^ xor31f5;
+	pre31f4 = bitrev(chr4) ^ xor31f4;	c = (pre31f4 >= 0xE5) ? 1 : 0;
+	pre31f7 = adc(chr4, pre31f7);
+	pre31f8 = adc(pre31f8, pre31f5);	wk31fa = ror(pre31fa);
+	pre31fa = adc(wk31fa, chr4);
+	pre31fb += c + bitcnt(chr4);
+
+
+	/*$31F4*/	work8col[gblidx + 0] = pre31f4;
+	/*$31F5*/	work8col[gblidx + 1] = pre31f5;
+	/*$31F7*/	work8col[gblidx + 2] = pre31f7;
+	/*$31F8*/	work8col[gblidx + 3] = pre31f8;
+	/*$31F9*/	work8col[gblidx + 4] = unvalid | (pre31f9 ^ chr1 ^ chr2 ^ chr3 ^ chr4);
+	/*$31FA*/	work8col[gblidx + 5] = pre31fa;
+	/*$31FB*/	work8col[gblidx + 6] = pre31fb;
+	/*carry*/	work8col[gblidx + 7] = c;
+	// F6は実質固定値なのでつめて次の桁に渡すキャリーを格納する
 }
 
-// 13桁目の導出とxor 0x07結果の妥当性判断
-__global__ void calcxor13_validchk(
-	unsigned char		*valid14,		// 14桁目が有効なら1を格納
-	const unsigned char *xor12,			// 12桁目まで導出されたXOR
-	const unsigned char *chrmask		// 有効な文字コードかどうか
+// 残りの１桁導出と最終桁までのチェックディジット計算、有効判定
+__global__ void calclast_validate(
+	unsigned char		*result,	// OUT  14桁分の各データ計算結果
+	unsigned char		*valid,		// OUT  パスワードとして成り立つなら1(true)でなければ0(false)
+	const unsigned char	*work,		// IN	12桁目までで導出された途中値
+	const unsigned char *lut_x31F4,	// IN	$31F4導出用のLUT
+	const unsigned char *lut_x31F5,	// IN	$31F5導出用のLUT
+	const unsigned char	*chrmask,	// IN	有効な文字コードかどうかのフラグマップ
+	const unsigned int	offset		// IN	blockIdx.xのオフセット
 )
 {
-	unsigned char col13 = xor12[blockIdx.x] ^ threadIdx.x;	// 13桁目の導出 1677万要素の当該桁値
+	const unsigned int	gblidx = 8 * blockIdx.x + (offset * gridDim.x);	// ブロック番号xがworkに対するインデックス
+	const unsigned char col13 = threadIdx.x;		// スレッドidx.xが13桁目の文字コード候補
 
-	col13 |= chrmask[threadIdx.x];
-	col13 ^= 0x07;
+	unsigned char pre31f4(work[gblidx + 0]);
+	unsigned char pre31f5(work[gblidx + 1]);
+	unsigned char pre31f7(work[gblidx + 2]);
+	unsigned char pre31f8(work[gblidx + 3]);
+	unsigned char pre31f9(work[gblidx + 4]);
+	unsigned char pre31fa(work[gblidx + 5]);
+	unsigned char pre31fb(work[gblidx + 6]);
+	unsigned char	    c(work[gblidx + 7]);	// キャリーフラグ
 
-	valid14[(blockIdx.x*blockDim.x) + threadIdx.x] = !(col13 & 0x80);	// 無効な文字コードか判定をかける
-}
+	unsigned char xor31f4, xor31f5, wk31fa;
 
-// カーネル呼び出しテスト用
-__global__ void kerntest()
-{
+	// 一部オペコードをインライン化
+	auto bitrev = [](unsigned int v) {	unsigned int wk = __brev(v); return (wk >> 24); };
+	auto adc = [&c](unsigned short vl, unsigned short vr) { unsigned short wk = vl + vr + c; c = (wk >> 8) & 0x01; return (wk & 0xFF); };
+	auto ror = [&c](unsigned char v) { unsigned char wc = c; c = v & 0x01; return (unsigned char)((v >> 1) | (wc << 7)); };
+	auto bitcnt = [](unsigned long int v) { return (__popc(v)); };
+
+	unsigned char wk14 = pre31f9 ^ col13;	// 13桁目を12桁目までの結果にXOR→ 31f9
+	pre31f9 = (pre31f9 & 0x80) | chrmask[wk14 & 0x3F];	// 無効コード判定は引き継ぐ
+
+	unsigned char	col14 = pre31f9 ^ 0x07;		// 下位3bit反転で14桁目
+
+	const unsigned char chr1(col13 & 0x3F), chr2(col14 & 0x3F);
+
+
+	// col13～col14で与えれるならびで計算をまわす
+	xor31f4 = lut_x31F4[pre31f5]; xor31f5 = lut_x31F5[pre31f5];
+	pre31f5 = pre31f4 ^ xor31f5;
+	pre31f4 = bitrev(chr1) ^ xor31f4;	c = (pre31f4 >= 0xE5) ? 1 : 0;
+	pre31f7 = adc(chr1, pre31f7);
+	pre31f8 = adc(pre31f8, pre31f5);	wk31fa = ror(pre31fa);
+	pre31fa = adc(wk31fa, chr1);
+	pre31fb += c + bitcnt(chr1);
+
+	xor31f4 = lut_x31F4[pre31f5]; xor31f5 = lut_x31F5[pre31f5];
+	pre31f5 = pre31f4 ^ xor31f5;
+	pre31f4 = bitrev(chr2) ^ xor31f4;	c = (pre31f4 >= 0xE5) ? 1 : 0;
+	pre31f7 = adc(chr2, pre31f7);
+	pre31f8 = adc(pre31f8, pre31f5);	wk31fa = ror(pre31fa);
+	pre31fa = adc(wk31fa, chr2);
+	pre31fb += c + bitcnt(chr2);
+
+	bool	judge = true
+		&& (pre31f4 == 0x65)
+		&& (pre31f5 == 0x94)
+		&& (pre31f7 == 0xAC)
+		&& (pre31f8 == 0xE9)
+		&& (pre31f9 == 0x07)
+		&& (pre31fa == 0x33)
+		&& (pre31fb == 0x25)
+		;
+
+	/*$31F4*/	result[((blockIdx.x * blockDim.x) + threadIdx.x * 8) + 0] = pre31f4;
+	/*$31F5*/	result[((blockIdx.x * blockDim.x) + threadIdx.x * 8) + 1] = pre31f5;
+	/*$31F7*/	result[((blockIdx.x * blockDim.x) + threadIdx.x * 8) + 2] = pre31f7;
+	/*$31F8*/	result[((blockIdx.x * blockDim.x) + threadIdx.x * 8) + 3] = pre31f8;
+	/*$31F9*/	result[((blockIdx.x * blockDim.x) + threadIdx.x * 8) + 4] = pre31f9;
+	/*$31FA*/	result[((blockIdx.x * blockDim.x) + threadIdx.x * 8) + 5] = pre31fa;
+	/*$31FB*/	result[((blockIdx.x * blockDim.x) + threadIdx.x * 8) + 6] = pre31fb;
+	/*Passed*/	result[((blockIdx.x * blockDim.x) + threadIdx.x * 8) + 7] = judge;
+
+	valid[(blockIdx.x * blockDim.x) + threadIdx.x] = judge;
 }
 
 const unsigned char lut_xor31F4[256] = {
@@ -274,46 +276,9 @@ const unsigned char lut_xor31F5[256] = {
 	0x8F,0x06,0x9D,0x14,0xAB,0x22,0xB9,0x30,0xC7,0x4E,0xD5,0x5C,0xE3,0x6A,0xF1,0x78,
 };
 
-// 文字のビットを上下反転するテーブル
-unsigned char lut_reverse_char_bit[] = {
-  0b00000000, 0b10000000, 0b01000000, 0b11000000, 0b00100000, 0b10100000, 0b01100000, 0b11100000,	// 00 - 07
-  0b00010000, 0b10010000, 0b01010000, 0b11010000, 0b00110000, 0b10110000, 0b01110000, 0b11110000,	// 08 - 0F
-  0b00001000, 0b10001000, 0b01001000, 0b11001000, 0b00101000, 0b10101000, 0b01101000, 0b11101000,	// 10 - 17
-  0b00011000, 0b10011000, 0b01011000, 0b11011000, 0b00111000, 0b10111000, 0b01111000, 0b11111000,	// 18 - 1F
-  0b00000100, 0b10000100, 0b01000100, 0b11000100, 0b00100100, 0b10100100, 0b01100100, 0b11100100,	// 20 - 27
-  0b00010100, 0b10010100, 0b01010100, 0b11010100, 0b00110100, 0b10110100, 0b01110100, 0b11110100,	// 28 - 2F
-  0b00001100, 0b10001100, 0b01001100, 0b11001100, 0b00101100, 0b10101100, 0b01101100, 0b11101100,	// 30 - 37
-  0b00011100, 0b10011100, 0b01011100, 0b11011100, 0b00111100, 0b10111100, 0b01111100, 0b11111100,	// 38 - 3F
-};
-
 using namespace std;
 
-//cudaError_t addWithCuda(int *c, const int *a, const int *b, unsigned int size);
-cudaError_t chkPass(unsigned char *, string, int, unsigned char *);
-
-const unsigned char g_chrcode[256] =
-{
-	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
-	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
-	0x00,0x2D,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x2B,0x00,0x00,
-	0x25,0x04,0x0C,0x14,0x1C,0x24,0x05,0x0D,0x15,0x1D,0x00,0x00,0x00,0x00,0x00,0x00,
-	0x00,0x00,0x08,0x10,0x18,0x20,0x28,0x30,0x01,0x09,0x11,0x19,0x21,0x29,0x31,0x02,
-	0x0A,0x12,0x1A,0x22,0x2A,0x32,0x03,0x0B,0x13,0x1B,0x23,0x00,0x00,0x00,0x00,0x00,
-	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
-	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
-	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
-	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
-	0x00,0x00,0x00,0x00,0x00,0x33,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
-	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x35,0x00,0x00,0x00,0x00,0x00,
-	0x00,0x00,0x00,0x00,0x00,0x2C,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
-	0x00,0x34,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
-	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
-	0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
-};
-
-//const char _dict[] = { "ABCDEFGHIJKLMNOPQRSTUVWXYZ" };
-const char _dict[] = { "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!.-nmcﾅﾑｺ" };
-
+// const char _dict[] = { "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!.-nmcﾅﾑｺ" };
 const unsigned char charvalidmask[64] = { 
 	0x00,0x00,0x00,0x00,0x00,0x00,0x80,0x80,	// 0x06と0x07が無効
 	0x00,0x00,0x00,0x00,0x00,0x00,0x80,0x80,
@@ -334,67 +299,15 @@ static unsigned char result[WORKSIZE];
 
 int main()
 {
-	chkthread(result, WORKSIZE);
-
-#if 0
-	unsigned char	pass_columns[PASSWORD_LEN_MAX] = { 0 };
-	int passed = -1;
-
 	cudaError_t cudaStatus;
 
-	const size_t	dictlen = sizeof(_dict);
-	std::string chrtable(_dict, dictlen);
-	unsigned char *chkresult = new unsigned char[dictlen * dictlen];
+	chkthread(result, WORKSIZE);
 
-	const int		COLUMNS = 14;
-	const int		refresh_col_n = 4;
-	const int		chkcol = 8;
-	unsigned char	chkkey;
-	unsigned char	refresh_col;		// 進捗表示用の判定桁
-
-	// 終了判定用桁値を退避
-	chkkey = pass_columns[chkcol];
-	refresh_col = pass_columns[refresh_col_n];
-
-	while (pass_columns[chkcol] == chkkey) {
-
-		if (refresh_col != pass_columns[refresh_col_n]) {
-
-			for (int idx = 0; idx < PASSWORD_LEN; ++idx) {
-				fprintf(stderr, "%c", _dict[pass_columns[idx]]);
-			}
-			fprintf(stderr, "\n");
-			refresh_col = pass_columns[refresh_col_n];
-		}
-
-		cudaError_t cudaStatus = chkPass(chkresult, chrtable, 14, pass_columns);
-		if (cudaStatus != cudaSuccess) { fprintf(stderr, "passcheck failed!"); return 1; }
-
-		for (int idx = 0; idx < (chrtable.size() * chrtable.size()); ++idx) {
-			if (chkresult[idx] != 0) {
-				fprintf(stderr, "Passed %d\n", idx);
-			}
-		}
-
-		// 終了条件に合致する状態を判定したら探索終了
-		bool carry = true;
-		for (int col = (2); col < (COLUMNS - 1); ++col) {
-			//	for (int col = 2; col < (COLUMNS - 1); ++col) {
-			pass_columns[col] += carry ? 1 : 0;
-			carry = (pass_columns[col] == dictlen);
-			pass_columns[col] = carry ? 0 : pass_columns[col];
-			//	candidate[col] = dict[counters[col]];
-		}
-	}
-
-	
 	// cudaDeviceReset must be called before exiting in order for profiling and
     // tracing tools such as Nsight and Visual Profiler to show complete traces.
     cudaStatus = cudaDeviceReset();
     if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaDeviceReset failed!"); return 1; }
 
-	delete[] chkresult;
-#endif
 	return 0;
 }
 
@@ -404,72 +317,88 @@ cudaError_t chkthread(
 )
 {
 	cudaError_t cudaStatus;
-//	unsigned char *dev_result = 0;		// 判定結果
-	unsigned char *dev_xor_result = 0;		// 4桁ぶんのxor結果
-	unsigned char *dev_xor_result8 = 0;		// 8桁ぶんのxor結果(テンポラリ)
-	unsigned char *dev_xor_result12 = 0;	// 12桁ぶんのxor結果(テンポラリ)
-	unsigned char *dev_31F9_is07h = 0;		// 13桁目までxorを求めた結果に0x07でxorした値(14桁目の文字コード)が有効な文字コードか
-
 	unsigned char *dev_chrcode_mask = 0;	// 有効文字コード判定用マスク		有効は0x00、無効は0x80。
+	unsigned char *dev_validpass = 0;		// 計算が合うならば1が入る
 
-	unsigned char *cpu_31F9_valid = 0;
-	unsigned long validcnt = 0;
+	unsigned char *dev_31F4_xortbl = 0;		// $31F4導出用テーブル
+	unsigned char *dev_31F5_xortbl = 0;		// $31F5導出用テーブル
 
+	unsigned char *cpu_validpass = 0;		// 有効パスワード判定結果(CPU側)
+	unsigned char *cpu_calcresult = 0;		// 計算結果確認用
 
-//	dim3	 block_530m(48, 8, 2), grid_530m(3, 48, 6);	// 文字48種 4桁分の並列計算グリッド用	 5.3M items
-	dim3	 block_1677m(64, 8, 2), grid_1677m(4, 64, 4);	// 文字64種 4桁分の並列計算グリッド用	16.8M items
+	unsigned char *dev_res4 = 0;		// 先頭4桁ぶんの計算結果とキャリー情報
+	unsigned char *dev_res8 = 0;		// 5-8桁までの計算結果とキャリー情報
+	unsigned char *dev_res12 = 0;		// 9-12桁まで計算結果とキャリー情報
+	unsigned char *dev_result = 0;		// 14桁の計算結果
 
-	cudaStatus = cudaSetDevice(0);																		if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaSetDevice failed!  Do you have a CUDA-capable GPU installed?"); goto Error; }
+	unsigned long long validcnt = 0;	// チェックディジットを通ったパスワードの個数
 
-	// 4桁分総組合せのXORデータ生成
-	cudaStatus = cudaMalloc((void**)&dev_xor_result, 64 * 64 * 64 * 64 * sizeof(unsigned char));		if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaMalloc failed!"); goto Error; }
-	cudaStatus = cudaMalloc((void**)&dev_xor_result8, 64 * 64 * 64 * 64 * sizeof(unsigned char));		if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaMalloc failed!"); goto Error; }
-	cudaStatus = cudaMalloc((void**)&dev_xor_result12, 64 * 64 * 64 * 64 * sizeof(unsigned char));		if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaMalloc failed!"); goto Error; }
-	cudaStatus = cudaMalloc((void**)&dev_31F9_is07h, 64 * 64 * 64 * 64 * 64 * sizeof(unsigned char));		if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaMalloc failed!"); goto Error; }
+	dim3	 block_1677m(64), grid_1677m(64 * 64, 64);	// 文字64種 4桁分の並列計算グリッド用	16.8M items
 
-	// 64文字種分のコード有効無効情報
+	cudaStatus = cudaSetDevice(0);		if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaSetDevice failed!  Do you have a CUDA-capable GPU installed?"); goto Error; }
+
+	
+	// 導出用テーブル(const)
 	cudaStatus = cudaMalloc((void**)&dev_chrcode_mask, 64 * sizeof(unsigned char));						if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaMalloc failed!"); goto Error; }
+	cudaStatus = cudaMalloc((void**)&dev_31F4_xortbl, 256 * sizeof(unsigned char));		if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaMalloc failed!"); goto Error; }
+	cudaStatus = cudaMalloc((void**)&dev_31F5_xortbl, 256 * sizeof(unsigned char));		if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaMalloc failed!"); goto Error; }
+
+	// 4桁分の各データ算出用領域確保
+	cudaStatus = cudaMalloc((void**)&dev_res4, 64 * 64 * 64 * 64 * 8);	if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaMalloc failed!"); goto Error; }
+	cudaStatus = cudaMalloc((void**)&dev_res8, 64 * 64 * 64 * 64 * 8);	if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaMalloc failed!"); goto Error; }
+	cudaStatus = cudaMalloc((void**)&dev_res12, 64 * 64 * 64 * 64 * 8);	if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaMalloc failed!"); goto Error; }
+	cudaStatus = cudaMalloc((void**)&dev_result, 64 * 64 * 64 * 8);	if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaMalloc failed!"); goto Error; }
+	cudaStatus = cudaMalloc((void**)&dev_validpass, 64 * 64 * 64);	if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaMalloc failed!"); goto Error; }
+
+
 	cudaStatus = cudaMemcpy(dev_chrcode_mask, charvalidmask, 64 * sizeof(unsigned char), cudaMemcpyHostToDevice);	if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaMemcpy failed!"); goto Error; }
+	cudaStatus = cudaMemcpy(dev_31F4_xortbl, lut_xor31F4, 256 * sizeof(unsigned char), cudaMemcpyHostToDevice);	if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaMemcpy failed!"); goto Error; }
+	cudaStatus = cudaMemcpy(dev_31F5_xortbl, lut_xor31F5, 256 * sizeof(unsigned char), cudaMemcpyHostToDevice);	if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaMemcpy failed!"); goto Error; }
 
-	cudaStatus = cudaMallocHost((void**)&cpu_31F9_valid, 64 * 64 * 64 * 64 * 64 * sizeof(unsigned char));	if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaMalloc failed!"); goto Error; }
+	cudaStatus = cudaMallocHost((void**)&cpu_validpass, 64 * 64 * 64 * 8 * sizeof(unsigned char));	if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaMalloc failed!"); goto Error; }
+	cudaStatus = cudaMallocHost((void**)&cpu_calcresult, 64 * 64 * 64 * sizeof(unsigned char));	if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaMalloc failed!"); goto Error; }
 
-	// 4桁分総組合せのXORデータ計算
-	for (int offset = 0; offset < 16; ++offset) {
-		make_4col_fullpair <<<grid_1677m, block_1677m >>> (dev_xor_result, dev_chrcode_mask, offset);
-	}
-	cudaStatus = cudaGetLastError();			if (cudaStatus != cudaSuccess) { fprintf(stderr, "checkPassKernel launch failed: %s\n", cudaGetErrorString(cudaStatus)); goto Error; }
-	cudaStatus = cudaDeviceSynchronize();		if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus); goto Error; }
+	// 先頭４桁全組みあわせの計算
+	calc_1_4col <<< dim3(64 * 64, 64), dim3(64) >>> (dev_res4, dev_chrcode_mask, dev_31F4_xortbl, dev_31F5_xortbl);	cudaStatus = cudaGetLastError();			if (cudaStatus != cudaSuccess) { fprintf(stderr, "checkPassKernel launch failed: %s\n", cudaGetErrorString(cudaStatus)); goto Error; }
+	cudaStatus = cudaDeviceSynchronize();		if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching calu14col!\n", cudaStatus); goto Error; }
 
 	validcnt = 0;
 
-	// 8桁ぶんの組合せを計算する
-	for (int xor4idx = 0; xor4idx < (256 * 256 * 256); ++xor4idx) {
+	for (int xor4idx = 0; xor4idx < (64 * 64 * 64 * 64); ++xor4idx) {
 
-		// xor4idx番目の組合せについて次の4桁を計算する
-		calcxor8 << < 256 * 256, 256 >> > (dev_xor_result8, dev_xor_result, xor4idx);
+		// 5-8桁の組合せを計算する
+		calc_4col <<< dim3(64 * 64, 64), dim3(64) >>> (dev_res8, dev_res4, dev_chrcode_mask, dev_31F4_xortbl, dev_31F5_xortbl, xor4idx);
 		cudaStatus = cudaDeviceSynchronize();		if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus); goto Error; }
 
-		// 12桁分の組合せを計算する
-		for (int xor8idx = 0; xor8idx < (256 * 256 * 256); ++xor8idx) {
-			// xor8idx番目の組合せについて次の4桁を計算する
-			calcxor8 << < 256 * 256, 256 >> > (dev_xor_result12, dev_xor_result8, xor8idx);
-			cudaStatus = cudaDeviceSynchronize();		if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus); goto Error; }
-
-			// 13桁目の導出と14桁目の有効な文字コードか判定
-			calcxor13_validchk << < 256 * 256 * 256, 64 >> > (dev_31F9_is07h, dev_xor_result12, dev_chrcode_mask);
+		for (int xor8idx = 0; xor8idx < (64 * 64 * 64 * 64); ++xor8idx) {
+			// 9～12桁分の組合せを計算する
+			calc_4col <<< dim3(64 * 64, 64), 64 >>> (dev_res12, dev_res8, dev_chrcode_mask, dev_31F4_xortbl, dev_31F5_xortbl, xor8idx);
 			cudaStatus = cudaDeviceSynchronize();		if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus); goto Error; }
 
 
-			cudaStatus = cudaMemcpy(cpu_31F9_valid, dev_31F9_is07h, 64 * 64 * 64 * 64 * 64 * sizeof(unsigned char), cudaMemcpyDeviceToHost);
-			for (int chkrs = 0; chkrs < (256 * 256 * 256 * 64); ++chkrs) {
-				validcnt += cpu_31F9_valid[chkrs];
+			for (int xor12idx = 0; xor12idx < (64 * 64); ++xor12idx) {
+				// 13,14桁目の導出とチェックディジットが通っているかの判定
+				calclast_validate << < 64 * 64, 64 >> > (dev_result, dev_validpass, dev_res12, dev_31F4_xortbl, dev_31F5_xortbl, dev_chrcode_mask, xor12idx);
+				cudaStatus = cudaDeviceSynchronize();		if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching validation!\n", cudaStatus); goto Error; }
+
+
+				cudaStatus = cudaMemcpy(cpu_calcresult, dev_result, size_t(64 * 64 * 64 * 8) * sizeof(unsigned char), cudaMemcpyDeviceToHost);
+				cudaStatus = cudaMemcpy(cpu_validpass, dev_validpass, 64 * 64 * 64 * sizeof(unsigned char), cudaMemcpyDeviceToHost);
+				for (int chkrs = 0; chkrs < (64 * 64 * 64); ++chkrs) {
+					printf("\n");
+
+					for (int vidx = 0; vidx < 8; ++vidx) {
+						printf("%02X ", cpu_calcresult[chkrs * 8 + vidx]);
+					}
+					validcnt += cpu_validpass[chkrs];
+				}
+//				printf("\n%d items\n", validcnt);
+
+
 			}
-
-			printf("%d items\n", validcnt);
-			validcnt = 0;
 		}
 	}
-//	kerntest <<< dim3(256*256), dim3(256) >>> ();
+	printf("found \n%lld items\n", validcnt);
 
 	// Check for any errors launching the kernel
 	cudaStatus = cudaGetLastError();			if (cudaStatus != cudaSuccess) { fprintf(stderr, "checkPassKernel launch failed: %s\n", cudaGetErrorString(cudaStatus)); goto Error; }
@@ -479,111 +408,25 @@ cudaError_t chkthread(
 	cudaStatus = cudaDeviceSynchronize();		if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus); goto Error; }
 
 	// Copy output vector from GPU buffer to host memory.
-	cudaStatus = cudaMemcpy(cpu_result, dev_xor_result, 64 * 64 * 64 * 64 * sizeof(unsigned char), cudaMemcpyDeviceToHost);
-	if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaMemcpy failed!"); goto Error; }
+//	cudaStatus = cudaMemcpy(cpu_result, dev_xor_result, 64 * 64 * 64 * 64 * sizeof(unsigned char), cudaMemcpyDeviceToHost);
+//	if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaMemcpy failed!"); goto Error; }
 
 
 Error:
-	cudaFree(cpu_31F9_valid);
-	cudaFree(dev_31F9_is07h);
-	cudaFree(dev_xor_result12);
-	cudaFree(dev_xor_result8);
-	cudaFree(dev_xor_result);
 	cudaFree(dev_chrcode_mask);
+	cudaFree(dev_validpass);
 
-	return(cudaStatus);
+	cudaFree(dev_31F4_xortbl);
+	cudaFree(dev_31F5_xortbl);
 
-}
-#if 0
-// デバイスとのやり取り
-cudaError_t chkPass(
-	unsigned char *result_holder,		// OUTPUT 計算結果の受取先
-	string	chrdic,						// 文字種のテーブル
-	int		passlength,					// パスワード長さ
-	unsigned char *passcolmns			// パスワードの総当たり用カウンタ[PASSWORD_LEN_MAX = 16]
-)
-{
-	cudaError_t cudaStatus;
+	cudaFree(cpu_validpass);
+	cudaFree(cpu_calcresult);
 
-	unsigned char *dev_result = 0;		// 判定結果
-	unsigned char *dev_candidate = 0;	// 照合対象のキーと長さ情報の配列
-	unsigned char *dev_reference = 0;	// 判定対象のチェックディジット
-
-	unsigned char *dev_passnum = 0;		// パスワード生成用カウンタ
-	unsigned char *dev_lut_code = 0;	// 文字変換テーブル
-
-	int dlen = chrdic.size();
-
-	unsigned char reference[16] = {
-		0x65, 0x94, 0x0E, 0xAC, 0xE9, 0x07, 0x33, 0x25,	// ←探すべきチェックディジット群
-		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
-	};
-
-
-	cudaStatus = cudaSetDevice(0);
-	if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaSetDevice failed!  Do you have a CUDA-capable GPU installed?"); goto Error; }
-
-	// 照合結果は辞書の文字種分
-	cudaStatus = cudaMalloc((void**)&dev_result, chrdic.size() * chrdic.size() * sizeof(unsigned char));
-	if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaMalloc failed!"); goto Error; }
-
-	// パスワード候補数は文字種分
-	cudaStatus = cudaMalloc((void**)&dev_candidate, chrdic.size() * chrdic.size() * sizeof(unsigned char) * PASSWORD_LEN_MAX);
-	if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaMalloc failed!"); goto Error; }
-
-	// 文字変換テーブル
-	cudaStatus = cudaMalloc((void**)&dev_lut_code, 256);
-	if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaMalloc failed!"); goto Error; }
-
-	// 文字テーブル
-	cudaStatus = cudaMalloc((void**)&dev_passnum, PASSWORD_LEN_MAX);
-	if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaMalloc failed!"); goto Error; }
-
-	// 照合対象のチェックディジットは一種類
-	cudaStatus = cudaMalloc((void**)&dev_reference, 16);
-	if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaMalloc failed!"); goto Error; }
-
-	// Copy input vectors from host memory to GPU buffers.
-	// 文字コード変換テーブル
-	cudaStatus = cudaMemcpy(dev_lut_code, g_chrcode, 256, cudaMemcpyHostToDevice);
-	if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaMemcpy failed!"); goto Error; }
-
-	// カウンタから文字コード生成
-	chrconvKernel << <chrdic.size(), chrdic.size() >> >	(dev_candidate, dev_passnum, dev_lut_code, passlength, chrdic.size());
-	// Check for any errors launching the kernel
-	cudaStatus = cudaGetLastError();
-	if (cudaStatus != cudaSuccess) { fprintf(stderr, "chrconvKernel launch failed: %s\n", cudaGetErrorString(cudaStatus)); goto Error; }
-
-	cudaStatus = cudaMemcpy(dev_reference, reference, 16, cudaMemcpyHostToDevice);
-	if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaMemcpy failed!"); goto Error; }
-
-	cudaStatus = cudaDeviceSynchronize();
-
-	// Launch a kernel on the GPU with one thread for each element.
-	checkPassKernel << <chrdic.size(), chrdic.size() >> > (dev_result, dev_candidate, dev_reference);
-
-	// Check for any errors launching the kernel
-	cudaStatus = cudaGetLastError();
-	if (cudaStatus != cudaSuccess) { fprintf(stderr, "checkPassKernel launch failed: %s\n", cudaGetErrorString(cudaStatus)); goto Error; }
-
-	// cudaDeviceSynchronize waits for the kernel to finish, and returns
-// any errors encountered during the launch.
-	cudaStatus = cudaDeviceSynchronize();
-	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus); goto Error; }
-
-	// Copy output vector from GPU buffer to host memory.
-	cudaStatus = cudaMemcpy(result_holder, dev_result, chrdic.size() * chrdic.size(), cudaMemcpyDeviceToHost);
-	if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaMemcpy failed!"); goto Error; }
-
-Error:
+	cudaFree(dev_res4);
+	cudaFree(dev_res8);
+	cudaFree(dev_res12);
 	cudaFree(dev_result);
-	cudaFree(dev_candidate);
-	cudaFree(dev_reference);
-	cudaFree(dev_passnum);
-	cudaFree(dev_lut_code);
 
 	return(cudaStatus);
-}
 
-#endif
+}
