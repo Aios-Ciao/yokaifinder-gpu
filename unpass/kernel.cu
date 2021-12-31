@@ -1,8 +1,11 @@
-#include <iostream>
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
+#include <iostream>
+#include <fstream>
 #include <string>
-#include <stdio.h>
+#include <forward_list>
+#include <numeric>
+#include <conio.h>
 
 __device__ inline unsigned char bitrev(unsigned int v)
 {
@@ -179,7 +182,6 @@ __global__ void calclast_validate(
 
 using namespace std;
 
-// const char _dict[] = { "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!.-nmcﾅﾑｺ" };
 const unsigned char charvalidmask[64] = {
 	0x00,0x00,0x00,0x00,0x00,0x00,0x01,0x01,	// 0x06と0x07が無効
 	0x00,0x00,0x00,0x00,0x00,0x00,0x01,0x01,
@@ -188,33 +190,82 @@ const unsigned char charvalidmask[64] = {
 	0x00,0x00,0x00,0x00,0x00,0x00,0x01,0x01,
 	0x00,0x00,0x00,0x00,0x00,0x00,0x01,0x01,
 	0x00,0x00,0x00,0x00,0x00,0x00,0x01,0x01,
+	0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x01,
 };
 
-cudaError_t chkthread(
-	unsigned char *cpu_result,
-	unsigned long	item_length
-);
+cudaError_t chkthread( forward_list<string>	& );
 
-const unsigned long	WORKSIZE = 64 * 64 * 64 * 64;
-static unsigned char result[WORKSIZE];
-
-int main()
+int main(int argc, char *argv[])
 {
 	cudaError_t cudaStatus;
+	forward_list<string>	vPasswordList;
 
-	chkthread(result, WORKSIZE);
+	ofstream writefile;
+
+	if (argc < 2) {
+		fprintf(stderr, "unpass outfilename.txt\n");
+		return (-1);
+	}
+
+	string filename(argv[1]);
+	writefile.open(filename, ios::out);
+	if (!writefile.fail()) {
+		printf(	"ファイルアクセスが可能であることが確認できました\n"
+				"一旦クローズします。\n"
+				"指定したファイルには触らずにお待ちください\n"
+		);
+	}
+	writefile.close();
+
+	chkthread(vPasswordList);
 
 	// cudaDeviceReset must be called before exiting in order for profiling and
-    // tracing tools such as Nsight and Visual Profiler to show complete traces.
-    cudaStatus = cudaDeviceReset();
-    if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaDeviceReset failed!"); return 1; }
+	// tracing tools such as Nsight and Visual Profiler to show complete traces.
+	cudaStatus = cudaDeviceReset();
+	if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaDeviceReset failed!"); return 1; }
+
+	printf("ソート中...");
+	vPasswordList.sort();
+	printf("完了\n");
+
+	size_t listlen = distance(vPasswordList.begin(), vPasswordList.end());
+	cout << listlen << "件見つかっています。" << endl;
+
+	printf("ファイル出力中...\n");
+	writefile.open(filename, ios::out);
+	if (!writefile.fail()) {
+		printf("ファイルが開けました\n"
+			"指定したファイルには触らずにお待ちください\n"
+		);
+	}
+	for (auto it : vPasswordList) {
+		writefile << it << endl;
+	}
+	writefile.close();
+	printf("完了\n");
 
 	return 0;
 }
 
+// カウンタからパス文字列への変換
+void count2pass4(unsigned int count, char *pass)
+{
+	static const char _dict[] = { "AHOV16  BIPW27  CJQX38  DKRY49  ELSZ50  FMT-ﾅ!  GNU.ﾑｺ          " };
+	pass[3] = _dict[count & 0x3F];	count >>= 6;
+	pass[2] = _dict[count & 0x3F];	count >>= 6;
+	pass[1] = _dict[count & 0x3F];	count >>= 6;
+	pass[0] = _dict[count & 0x3F];
+}
+void count2pass2(unsigned int count, char *pass)
+{
+	static const char _dict[] = { "AHOV16  BIPW27  CJQX38  DKRY49  ELSZ50  FMT-ﾅ!  GNU.ﾑｺ          " };
+	pass[1] = _dict[count & 0x3F];	count >>= 6;
+	pass[0] = _dict[count & 0x3F];
+}
+
+
 cudaError_t chkthread(
-	unsigned char *cpu_result,
-	unsigned long	item_length
+	forward_list<string>	&vPasswordList
 )
 {
 	cudaError_t cudaStatus;
@@ -239,8 +290,7 @@ cudaError_t chkthread(
 
 	unsigned long long validcnt = 0;		// チェックディジットを通ったパスワードの個数
 
-	static const char cvalid[2] = { '.', 'O' };	// 判定表示用
-
+	char	passstr[15] = { "AAAAAAAAAAAAAA" };
 
 	cudaStatus = cudaSetDevice(0);		if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaSetDevice failed!  Do you have a CUDA-capable GPU installed?"); goto Error; }
 	
@@ -273,58 +323,39 @@ cudaError_t chkthread(
 	cudaStatus = cudaDeviceSynchronize();		if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching calu14col!\n", cudaStatus); goto Error; }
 	cudaStatus = cudaMemcpy(cpu_unvalid4, dev_unvalid4, (64 * 64 * 64 * 64) * sizeof(unsigned char), cudaMemcpyDeviceToHost);
 
-	//cudaStatus = cudaMemcpy(cpu_calcresult, dev_res4, (64 * 64 * 64 * 64 * 8) * sizeof(unsigned char), cudaMemcpyDeviceToHost);
-	//for (int chkrs = 0; chkrs < 16/*(64 * 64 * 64)*/; ++chkrs) {
-	//	printf("\n");
-
-	//	for (int vidx = 0; vidx < 8; ++vidx) {
-	//		printf("%02x ", cpu_calcresult[chkrs * 8 + vidx]);
-	//	}
-	//}
-
+	printf("\n全探索開始");
 	validcnt = 0;
 	for (int xor4idx = 0; xor4idx < (64 * 64 * 64 * 64); ++xor4idx) {
 		// 無効文字が含まれていたら検索対象除外
 		if (cpu_unvalid4[xor4idx]) {
 			continue;
 		}
+		count2pass4(xor4idx, &passstr[0]);
+		printf("\nTotal %lld items\n", validcnt);
+		printf("\n1-4 Loop %5.3f%% %.4s", (float)xor4idx / (64 * 64 * 64 * 64), &passstr[0]);
 		
 		// 5-8桁の組合せを計算する
 		calc_4col << < dim3(64 * 64, 64), dim3(64) >> > (dev_res8, dev_unvalid8, dev_res4, dev_chrcode_mask, xor4idx);
 		cudaStatus = cudaDeviceSynchronize();		if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus); goto Error; }
 		cudaStatus = cudaMemcpy(cpu_unvalid8, dev_unvalid8, (64 * 64 * 64 * 64) * sizeof(unsigned char), cudaMemcpyDeviceToHost);
 
-		//cudaStatus = cudaMemcpy(cpu_calcresult, dev_res8, (64 * 64 * 64 * 64 * 8) * sizeof(unsigned char), cudaMemcpyDeviceToHost);
-		//for (int chkrs = 0; chkrs < (64 * 64 * 64); ++chkrs) {
-		//	printf("\n");
-
-		//	for (int vidx = 0; vidx < 8; ++vidx) {
-		//		printf("%02X ", cpu_calcresult[chkrs * 8 + vidx]);
-		//	}
-		//}
-
 		for (int xor8idx = 0; xor8idx < (64 * 64 * 64 * 64); ++xor8idx) {
 			if (cpu_unvalid8[xor8idx]) {
 				continue;
 			}
+			count2pass4(xor8idx, &passstr[4]);
+			printf("\nTotal %lld items\n", validcnt);
+			printf("\n5-8 Loop %5.3f%% %.4s", (float)xor8idx / (64 * 64 * 64 * 64), &passstr[4]);
 			// 9～12桁分の組合せを計算する
 			calc_4col << < dim3(64 * 64, 64), 64 >> > (dev_res12, dev_unvalid12, dev_res8, dev_chrcode_mask, xor8idx);
 			cudaStatus = cudaDeviceSynchronize();		if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus); goto Error; }
 			cudaStatus = cudaMemcpy(cpu_unvalid12, dev_unvalid12, (64 * 64 * 64 * 64) * sizeof(unsigned char), cudaMemcpyDeviceToHost);
 
-			//cudaStatus = cudaMemcpy(cpu_calcresult, dev_res12, (64 * 64 * 64 * 64 * 8) * sizeof(unsigned char), cudaMemcpyDeviceToHost);
-			//for (int chkrs = 0; chkrs < (64 * 64 * 64); ++chkrs) {
-			//	printf("\n");
-
-			//	for (int vidx = 0; vidx < 8; ++vidx) {
-			//		printf("%02X ", cpu_calcresult[chkrs * 8 + vidx]);
-			//	}
-			//}
-
 			for (int xor12idx = 0; xor12idx < (64 * 64 * 64 * 64); ++xor12idx) {
 				if (cpu_unvalid12[xor12idx]) {
 					continue;
 				}
+				count2pass4(xor12idx, &passstr[8]);
 				// 13,14桁目の導出とチェックディジットが通っているかの判定
 				calclast_validate << < 64, 64 >> > (dev_result, dev_validpass, dev_res12, xor12idx);
 				cudaStatus = cudaDeviceSynchronize();		if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching validation!\n", cudaStatus); goto Error; }
@@ -333,24 +364,22 @@ cudaError_t chkthread(
 				for (int chkrs = 0; chkrs < (64 * 64); ++chkrs) {
 					if (!cpu_validpass[chkrs]) continue;
 					cudaStatus = cudaMemcpy(cpu_calcresult, dev_result, (64 * 64 * 8) * sizeof(unsigned char), cudaMemcpyDeviceToHost);
+					count2pass2(chkrs, &passstr[12]);
 
-					printf("\n");
+					vPasswordList.push_front(string(passstr));
 
-					printf("%08X %08X %08X %04X | ", xor4idx, xor8idx, xor12idx, chkrs);
-					for (int vidx = 0; vidx < 8; ++vidx) {
-						printf("%02X ", cpu_calcresult[chkrs * 8 + vidx]);
-					}
-					printf("| %c ", cvalid[cpu_validpass[chkrs]]);
+					printf("\n%s", passstr);
+//					printf("%08X %08X %08X %04X | ", xor4idx, xor8idx, xor12idx, chkrs);
+//					for (int vidx = 0; vidx < 8; ++vidx) {
+//						printf("%02X ", cpu_calcresult[chkrs * 8 + vidx]);
+//					}
+//					printf("| %c ", cvalid[cpu_validpass[chkrs]]);
 					validcnt += cpu_validpass[chkrs];
 				}
-		//		goto FIN;
-
 			}
-			printf("\n%lld items\n", validcnt);
 		}
 	}
-FIN:
-	printf("found %lld items\n", validcnt);
+	printf("\n探索完了\n\n");
 
 	// Check for any errors launching the kernel
 	cudaStatus = cudaGetLastError();			if (cudaStatus != cudaSuccess) { fprintf(stderr, "checkPassKernel launch failed: %s\n", cudaGetErrorString(cudaStatus)); goto Error; }
