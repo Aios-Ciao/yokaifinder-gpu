@@ -190,24 +190,90 @@ const unsigned char charvalidmask[64] = {
 	0x00,0x00,0x00,0x00,0x00,0x00,0x01,0x01,
 	0x00,0x00,0x00,0x00,0x00,0x00,0x01,0x01,
 	0x00,0x00,0x00,0x00,0x00,0x00,0x01,0x01,
-	0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x01,
+	0x01,0x01,0x01,0x01,0x01,0x01,0x01,0x01,	// 0x38以上も無効
 };
 
-cudaError_t chkthread( forward_list<string>	& );
+const unsigned char chrcode[256] =
+{
+	0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
+	0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
+	0xF0,0x2D,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0x2B,0xFF,0xFF,
+	0x25,0x04,0x0C,0x14,0x1C,0x24,0x05,0x0D,0x15,0x1D,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
+	0xF0,0x00,0x08,0x10,0x18,0x20,0x28,0x30,0x01,0x09,0x11,0x19,0x21,0x29,0x31,0x02,
+	0x0A,0x12,0x1A,0x22,0x2A,0x32,0x03,0x0B,0x13,0x1B,0x23,0xFF,0xFF,0xFF,0xFF,0xFF,
+	0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
+	0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
+	0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
+	0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
+	0xFF,0xFF,0xFF,0xFF,0xFF,0x33,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
+	0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0x35,0xFF,0xFF,0xFF,0xFF,0xFF,
+	0xFF,0xFF,0xFF,0xFF,0xFF,0x2C,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
+	0xFF,0x34,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
+	0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
+	0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
+};
+
+bool countfrompass(string pass, unsigned int *st1_4, unsigned int *st5_8, unsigned int *st9_12, unsigned int *st13_14)
+{
+	// 14桁であること
+	if (pass.size() != 14) { return (false); }
+
+	// 有効文字だけで構成されること
+	for (auto ch : pass) { if (chrcode[ch] == 0xFF) { return (false); } }
+
+	unsigned int stwk;
+	stwk   = 0; stwk += chrcode[pass[ 0]];
+	stwk <<= 6; stwk += chrcode[pass[ 1]];
+	stwk <<= 6; stwk += chrcode[pass[ 2]];
+	stwk <<= 6; stwk += chrcode[pass[ 3]];
+	*st1_4 = stwk;
+	stwk   = 0; stwk += chrcode[pass[ 4]];
+	stwk <<= 6; stwk += chrcode[pass[ 5]];
+	stwk <<= 6; stwk += chrcode[pass[ 6]];
+	stwk <<= 6; stwk += chrcode[pass[ 7]];
+	*st5_8 = stwk;
+	stwk   = 0; stwk += chrcode[pass[ 8]];
+	stwk <<= 6; stwk += chrcode[pass[ 9]];
+	stwk <<= 6; stwk += chrcode[pass[10]];
+	stwk <<= 6; stwk += chrcode[pass[11]];
+	*st9_12 = stwk;
+	stwk   = 0; stwk += chrcode[pass[12]];
+	stwk <<= 6; stwk += chrcode[pass[13]];
+	*st13_14 = stwk;
+
+	return true;
+}
+
+cudaError_t chkthread( forward_list<string>	&, unsigned int, unsigned int, unsigned int, unsigned int);
 
 int main(int argc, char *argv[])
 {
-	cudaError_t cudaStatus;
+	cudaError_t				cudaStatus;
 	forward_list<string>	vPasswordList;
+	unsigned int			sf1_4(0), sf5_8(0), sf9_12(0), sf13_14(0);
+	string					filename, startpass;
+	ofstream				writefile;
 
-	ofstream writefile;
-
-	if (argc < 2) {
-		fprintf(stderr, "unpass outfilename.txt\n");
+	switch (argc) {
+	case 3: // 探索開始文字列指定あり
+		startpass = argv[2];
+		{
+			bool valid = countfrompass(startpass, &sf1_4, &sf5_8, &sf9_12, &sf13_14);
+			if (!valid) {
+				fprintf(stderr, "パスワード探索開始の指定が間違っています。\n");
+				return (-1);
+			}
+		}
+		// no break
+	case 2:	// 出力ファイル名指定あり
+		filename = argv[1];
+		break;
+	case 1:
+	default:
+		fprintf(stderr, "unpass outfilename.txt [startpass]\n");
 		return (-1);
 	}
 
-	string filename(argv[1]);
 	writefile.open(filename, ios::out);
 	if (!writefile.fail()) {
 		printf(	"ファイルアクセスが可能であることが確認できました\n"
@@ -217,7 +283,7 @@ int main(int argc, char *argv[])
 	}
 	writefile.close();
 
-	chkthread(vPasswordList);
+	chkthread(vPasswordList, sf1_4, sf5_8, sf9_12, sf13_14);
 
 	// cudaDeviceReset must be called before exiting in order for profiling and
 	// tracing tools such as Nsight and Visual Profiler to show complete traces.
@@ -272,8 +338,12 @@ void count2pass2(unsigned int count, char *pass)
 
 
 cudaError_t chkthread(
-	forward_list<string>	&vPasswordList
-)
+	forward_list<string>	&vPasswordList,
+	unsigned int			stidx1,
+	unsigned int			stidx2,
+	unsigned int			stidx3,
+	unsigned int			stidx4
+	)
 {
 	cudaError_t cudaStatus;
 	unsigned char *dev_chrcode_mask = 0;	// 有効文字コード判定用マスク		有効は0x00、無効は0x80。
@@ -296,6 +366,10 @@ cudaError_t chkthread(
 	unsigned char *dev_result = 0;			// 14桁の計算結果
 
 	unsigned long long validcnt = 0;		// チェックディジットを通ったパスワードの個数
+	unsigned int  searchidx1;				// 探索開始位置(先頭4桁)
+	unsigned int  searchidx5;				// 探索開始位置(5-8桁)
+	unsigned int  searchidx9;				// 探索開始位置(9-12桁)
+	unsigned int  searchidx13;				// 探索開始位置(13-14桁)
 
 	char	passstr[15] = { "AAAAAAAAAAAAAA" };
 
@@ -332,62 +406,60 @@ cudaError_t chkthread(
 
 	printf("\n全探索開始");
 	validcnt = 0;
-	for (int xor4idx = 0; xor4idx < (64 * 64 * 64 * 64); ++xor4idx) {
+	for (searchidx1 = stidx1; searchidx1 < (64 * 64 * 64 * 64); ++searchidx1) {
 		// 無効文字が含まれていたら検索対象除外
-		if (cpu_unvalid4[xor4idx]) {
+		if (cpu_unvalid4[searchidx1]) {
 			continue;
 		}
-		count2pass4(xor4idx, &passstr[0]);
+		count2pass4(searchidx1, &passstr[0]);
 		printf("\nTotal %lld items\n", validcnt);
-		printf("\n1-4 Loop %5.3f%% %.4s", (float)xor4idx / (64 * 64 * 64 * 64), &passstr[0]);
+		printf("\n1-4 Loop %5.3f%% %.4s", (float)searchidx1 / (64 * 64 * 64 * 64), &passstr[0]);
 		
 		// 5-8桁の組合せを計算する
-		calc_4col << < dim3(64 * 64, 64), dim3(64) >> > (dev_res8, dev_unvalid8, dev_res4, dev_chrcode_mask, xor4idx);
+		calc_4col << < dim3(64 * 64, 64), dim3(64) >> > (dev_res8, dev_unvalid8, dev_res4, dev_chrcode_mask, searchidx1);
 		cudaStatus = cudaDeviceSynchronize();		if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus); goto Error; }
 		cudaStatus = cudaMemcpy(cpu_unvalid8, dev_unvalid8, (64 * 64 * 64 * 64) * sizeof(unsigned char), cudaMemcpyDeviceToHost);
 
-		for (int xor8idx = 0; xor8idx < (64 * 64 * 64 * 64); ++xor8idx) {
-			if (cpu_unvalid8[xor8idx]) {
+		for (searchidx5 = stidx2; searchidx5 < (64 * 64 * 64 * 64); ++searchidx5) {
+			if (cpu_unvalid8[searchidx5]) {
 				continue;
 			}
-			count2pass4(xor8idx, &passstr[4]);
+			count2pass4(searchidx5, &passstr[4]);
 			printf("\nTotal %lld items\n", validcnt);
-			printf("\n5-8 Loop %5.3f%% %.4s", (float)xor8idx / (64 * 64 * 64 * 64), &passstr[4]);
+			printf("\n5-8 Loop %5.3f%% %.4s", (float)searchidx5 / (64 * 64 * 64 * 64), &passstr[4]);
 			// 9～12桁分の組合せを計算する
-			calc_4col << < dim3(64 * 64, 64), 64 >> > (dev_res12, dev_unvalid12, dev_res8, dev_chrcode_mask, xor8idx);
+			calc_4col << < dim3(64 * 64, 64), 64 >> > (dev_res12, dev_unvalid12, dev_res8, dev_chrcode_mask, searchidx5);
 			cudaStatus = cudaDeviceSynchronize();		if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus); goto Error; }
 			cudaStatus = cudaMemcpy(cpu_unvalid12, dev_unvalid12, (64 * 64 * 64 * 64) * sizeof(unsigned char), cudaMemcpyDeviceToHost);
 
-			for (int xor12idx = 0; xor12idx < (64 * 64 * 64 * 64); ++xor12idx) {
-				if (cpu_unvalid12[xor12idx]) {
+			for (searchidx9 = stidx3; searchidx9 < (64 * 64 * 64 * 64); ++searchidx9) {
+				if (cpu_unvalid12[searchidx9]) {
 					continue;
 				}
-				count2pass4(xor12idx, &passstr[8]);
+				count2pass4(searchidx9, &passstr[8]);
 				// 13,14桁目の導出とチェックディジットが通っているかの判定
-				calclast_validate << < 64, 64 >> > (dev_result, dev_validpass, dev_res12, xor12idx);
+				calclast_validate << < 64, 64 >> > (dev_result, dev_validpass, dev_res12, searchidx9);
 				cudaStatus = cudaDeviceSynchronize();		if (cudaStatus != cudaSuccess) { fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching validation!\n", cudaStatus); goto Error; }
 
 				cudaStatus = cudaMemcpy(cpu_validpass, dev_validpass, 64 * 64 * sizeof(unsigned char), cudaMemcpyDeviceToHost);
-				for (int chkrs = 0; chkrs < (64 * 64); ++chkrs) {
-					if (!cpu_validpass[chkrs]) continue;
+				for (searchidx13 = stidx4; searchidx13 < (64 * 64); ++searchidx13) {
+					if (!cpu_validpass[searchidx13]) continue;
 					cudaStatus = cudaMemcpy(cpu_calcresult, dev_result, (64 * 64 * 8) * sizeof(unsigned char), cudaMemcpyDeviceToHost);
-					count2pass2(chkrs, &passstr[12]);
+					count2pass2(searchidx13, &passstr[12]);
 
 					vPasswordList.push_front(string(passstr));
 
-					printf("\n%s", passstr);
-//					printf("%08X %08X %08X %04X | ", xor4idx, xor8idx, xor12idx, chkrs);
-//					for (int vidx = 0; vidx < 8; ++vidx) {
-//						printf("%02X ", cpu_calcresult[chkrs * 8 + vidx]);
-//					}
-//					printf("| %c ", cvalid[cpu_validpass[chkrs]]);
-					validcnt += cpu_validpass[chkrs];
+					printf("\n%s | ", passstr);
+					for (int vidx = 0; vidx < 8; ++vidx) {
+						printf("%02X ", cpu_calcresult[searchidx13 * 8 + vidx]);
+					}
+					validcnt += cpu_validpass[searchidx13];
 				}
 
 				// ESCキー入力チェック
 				if (_kbhit() && (_getch() == 27)) {
 					printf("\nChecked up to the item \"%s\"."
-					"\n探索打ち切りました\n\n", passstr);
+					"\n探索を打ち切りました\n\n", passstr);
 					goto FIN;
 				}
 			}
