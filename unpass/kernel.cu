@@ -229,19 +229,26 @@ int main(int argc, char *argv[])
 	printf("完了\n");
 
 	size_t listlen = distance(vPasswordList.begin(), vPasswordList.end());
-	cout << listlen << "件見つかっています。" << endl;
+	if (listlen > 0) {
+		cout << listlen << "件見つかりました。" << endl;
 
-	printf("ファイル出力中...\n");
-	writefile.open(filename, ios::out);
-	if (!writefile.fail()) {
-		printf("ファイルが開けました\n"
-			"指定したファイルには触らずにお待ちください\n"
-		);
+		printf("ファイル出力中...\n");
+		writefile.open(filename, ios::out);
+		if (!writefile.fail()) {
+			printf("ファイルが開けました。\n"
+				"指定したファイルには触らずにお待ちください。\n"
+			);
+			for (auto it : vPasswordList) {
+				writefile << it << endl;
+			}
+		}
+		writefile.close();
 	}
-	for (auto it : vPasswordList) {
-		writefile << it << endl;
+	else {
+		cout << "指定範囲では見つかりませんでした。" << endl;
+		cout << "ファイル出力はスキップします。" << endl;
+
 	}
-	writefile.close();
 	printf("完了\n");
 
 	return 0;
@@ -376,11 +383,18 @@ cudaError_t chkthread(
 //					printf("| %c ", cvalid[cpu_validpass[chkrs]]);
 					validcnt += cpu_validpass[chkrs];
 				}
+
+				// ESCキー入力チェック
+				if (_kbhit() && (_getch() == 27)) {
+					printf("\nChecked up to the item \"%s\"."
+					"\n探索打ち切りました\n\n", passstr);
+					goto FIN;
+				}
 			}
 		}
 	}
 	printf("\n探索完了\n\n");
-
+FIN:
 	// Check for any errors launching the kernel
 	cudaStatus = cudaGetLastError();			if (cudaStatus != cudaSuccess) { fprintf(stderr, "checkPassKernel launch failed: %s\n", cudaGetErrorString(cudaStatus)); goto Error; }
 
